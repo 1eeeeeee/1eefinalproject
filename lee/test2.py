@@ -10,7 +10,7 @@ import google.generativeai as generativeai
 load_dotenv()
 
 # 初始化 Google Generative AI
-generativeai.configure(api_key=os.getenv('KEY'))
+generativeai.configure(api_key=os.getenv('key'))
 
 # 初始化 Flask 和 LINE Bot
 app = Flask(__name__)
