@@ -9,8 +9,8 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-LINE_CHANNEL_ACCESS_TOKEN = '+Q9oiCz/OFVBKSra3JPVxCSAx6DXBqCyUoHiC98eUYPkCytRZao//qaWd7q6wikwf5rm7gDWkfQz31SjTUb0v71QO9QQSeZ8NGufeXXo4QKIDuJmv8K7Y8wbIe3Lt0CRSo71hmE1aeqvdFJShi1fnwdB04t89/1O/w1cDnyilFU='
-LINE_CHANNEL_SECRET = '700fcdd598b149d9aec2112c58b0f1c7'
+LINE_CHANNEL_ACCESS_TOKEN = ''
+LINE_CHANNEL_SECRET = ''
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
