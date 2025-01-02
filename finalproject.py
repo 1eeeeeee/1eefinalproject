@@ -92,19 +92,16 @@ def handle_message(event):
     elif state == "add_name":
         user_states[user_id]["data"]["name"] = user_message
         user_states[user_id]["state"] = "add_date"
-        reply = "請告訴我這個食材的有效日期 (格式：YYYY-MM-DD)："
+        reply = "請告訴我要新增的食材有效日期（格式：YYYY-MM-DD）："
     elif state == "add_date":
         expiration_date = user_message
-        name = user_states[user_id]["data"].get("name")
-        if name and validate_date(expiration_date):
-            if is_future_date(expiration_date):
-                add_ingredient(name, expiration_date)
-                reply = f"已成功新增食材：{name}, 有效日期：{expiration_date}"
-            else:
-                reply = f"無效日期（過去的日期）：{expiration_date}"
+        if validate_date(expiration_date):
+            name = user_states[user_id]["data"]["name"]
+            add_ingredient(name, expiration_date)
+            reply = f"已新增食材：{name}（有效日期：{expiration_date}）"
+            user_states[user_id] = {"state": None, "data": {}}
         else:
-            reply = "日期格式錯誤，請重新輸入 (格式：YYYY-MM-DD)。"
-        user_states[user_id] = {"state": None, "data": {}}
+            reply = "日期格式錯誤，請重新輸入有效日期（格式：YYYY-MM-DD）："
     elif state == "delete":
         try:
             ingredient_ids = [int(id.strip()) for id in user_message.split()]
@@ -141,17 +138,19 @@ def handle_message(event):
         new_date = user_message
         ingredient_id = user_states[user_id]["data"].get("id")
         if validate_date(new_date):
-            if is_future_date(new_date):
-                modify_ingredient_date(ingredient_id, new_date)
-                reply = f"已成功修改食材 ID {ingredient_id} 的有效日期為：{new_date}"
-            else:
-                reply = f"無效日期（過去的日期）：{new_date}"
+            modify_ingredient_date(ingredient_id, new_date)
+            reply = f"已成功修改食材 ID {ingredient_id} 的有效日期為：{new_date}"
         else:
             reply = "日期格式錯誤，請重新輸入 (格式：YYYY-MM-DD)。"
         user_states[user_id] = {"state": None, "data": {}}
     else:
-        reply = "請輸入「新增」、「查詢」、「刪除」或「修改」來管理食材。"
-
+        try:
+            model = generativeai.GenerativeModel('gemini-2.0-flash-exp')
+            response = model.generate_content(user_message)
+            reply = response.text
+        except Exception as e:
+            reply = f"AI 發生錯誤：{str(e)}"
+    
     try:
         line_bot_api.reply_message(
             event.reply_token,
@@ -164,13 +163,6 @@ def validate_date(date_text):
     try:
         datetime.strptime(date_text, '%Y-%m-%d')
         return True
-    except ValueError:
-        return False
-
-def is_future_date(date_text):
-    try:
-        date = datetime.strptime(date_text, '%Y-%m-%d')
-        return date > datetime.now()
     except ValueError:
         return False
 
@@ -246,4 +238,4 @@ def reindex_ingredients():
         conn.close()
 
 if __name__ == "__main__":
-    app.run()
+    app.run(host="0.0.0.0", port=5000)
