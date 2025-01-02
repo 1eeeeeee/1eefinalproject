@@ -61,7 +61,21 @@ def handle_message(event):
     # 食材管理
     if user_message == "新增":
         user_states[user_id] = {"state": "add_name", "data": {}}
-        reply = "請告訴我要新增的食材名稱和有效日期（格式：名稱1,日期1;名稱2,日期2）："
+        reply = "請告訴我要新增的食材名稱："
+    elif user_states[user_id]["state"] == "add_name":
+        user_states[user_id]["data"]["name"] = user_message
+        user_states[user_id]["state"] = "add_date"
+        reply = "請告訴我要新增的食材有效日期（格式：YYYY-MM-DD）："
+    elif user_states[user_id]["state"] == "add_date":
+        user_states[user_id]["data"]["date"] = user_message
+        if validate_date(user_message):
+            name = user_states[user_id]["data"]["name"]
+            date = user_states[user_id]["data"]["date"]
+            add_ingredient(name, date)
+            reply = f"已新增食材：{name}（有效日期：{date}）"
+            user_states[user_id] = {"state": None, "data": {}}
+        else:
+            reply = "日期格式錯誤，請重新輸入有效日期（格式：YYYY-MM-DD）："
     elif user_message == "查詢":
         user_states[user_id] = {"state": None, "data": {}}
         ingredients = get_all_ingredients()
@@ -72,42 +86,43 @@ def handle_message(event):
     elif user_message == "刪除":
         user_states[user_id] = {"state": "delete", "data": {}}
         reply = "請輸入要刪除的食材 ID（多個 ID 請用空白分隔）："
-        
-    else:
-        state = user_states[user_id]["state"]
-        if state == "add_name":
-            ingredients = user_message.split(';')
-            errors = []
-            for ingredient in ingredients:
-                try:
-                    name, expiration_date = ingredient.split(',')
-                    if validate_date(expiration_date.strip()):
-                        add_ingredient(name.strip(), expiration_date.strip())
-                    else:
-                        errors.append(f"日期格式錯誤：{expiration_date.strip()}")
-                except ValueError:
-                    errors.append(f"格式錯誤：{ingredient}")
-            if errors:
-                reply = "以下食材新增失敗：\n" + "\n".join(errors)
-            else:
-                reply = "已成功新增所有食材：\n" + "\n".join([f"{name.strip()}, {expiration_date.strip()}" for name, expiration_date in [ingredient.split(',') for ingredient in ingredients]])
-            user_states[user_id] = {"state": None, "data": {}}
-        elif state == "delete":
-            try:
-                ingredient_ids = [int(id.strip()) for id in user_message.split()]
-                delete_ingredients(ingredient_ids)
-                reindex_ingredients()
-                reply = f"已成功刪除食材 ID：{' '.join(map(str, ingredient_ids))}"
-            except ValueError:
-                reply = "請輸入有效的食材 ID。"
+    elif user_message == "修改":
+        user_states[user_id] = {"state": "modify_id", "data": {}}
+        reply = "請輸入要修改的食材 ID："
+    elif user_states[user_id]["state"] == "modify_id":
+        user_states[user_id]["data"]["id"] = user_message
+        user_states[user_id]["state"] = "modify_field"
+        reply = "請告訴我要修改的項目（1.名稱 2.日期）："
+    elif user_states[user_id]["state"] == "modify_field":
+        user_states[user_id]["data"]["field"] = user_message
+        if user_message == "1":
+            user_states[user_id]["state"] = "modify_name"
+            reply = "請輸入新的名稱："
+        elif user_message == "2":
+            user_states[user_id]["state"] = "modify_date"
+            reply = "請輸入新的有效日期（格式：YYYY-MM-DD）："
+    elif user_states[user_id]["state"] == "modify_name":
+        ingredient_id = user_states[user_id]["data"]["id"]
+        new_name = user_message
+        modify_ingredient_name(ingredient_id, new_name)
+        reply = f"已修改食材 ID {ingredient_id} 的名稱為：{new_name}"
+        user_states[user_id] = {"state": None, "data": {}}
+    elif user_states[user_id]["state"] == "modify_date":
+        ingredient_id = user_states[user_id]["data"]["id"]
+        new_date = user_message
+        if validate_date(new_date):
+            modify_ingredient_date(ingredient_id, new_date)
+            reply = f"已修改食材 ID {ingredient_id} 的有效日期為：{new_date}"
             user_states[user_id] = {"state": None, "data": {}}
         else:
-            try:
-                model = generativeai.GenerativeModel('gemini-2.0-flash-exp')
-                response = model.generate_content(user_message)
-                reply = response.text
-            except Exception as e:
-                reply = f"AI 發生錯誤：{str(e)}"
+            reply = "日期格式錯誤，請重新輸入有效日期（格式：YYYY-MM-DD）："
+    else:
+        try:
+            model = generativeai.GenerativeModel('gemini-2.0-flash-exp')
+            response = model.generate_content(user_message)
+            reply = response.text
+        except Exception as e:
+            reply = f"AI 發生錯誤：{str(e)}"
     
     line_bot_api.reply_message(
         event.reply_token,
@@ -151,6 +166,20 @@ def reindex_ingredients():
     cursor.execute('DELETE FROM ingredients')
     for index, row in enumerate(rows, start=1):
         cursor.execute('INSERT INTO ingredients (id, name, expiration_date) VALUES (?, ?, ?)', (index, row[1], row[2]))
+    conn.commit()
+    conn.close()
+
+def modify_ingredient_name(ingredient_id, new_name):
+    conn = sqlite3.connect('ingredients.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE ingredients SET name = ? WHERE id = ?', (new_name, ingredient_id))
+    conn.commit()
+    conn.close()
+
+def modify_ingredient_date(ingredient_id, new_date):
+    conn = sqlite3.connect('ingredients.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE ingredients SET expiration_date = ? WHERE id = ?', (new_date, ingredient_id))
     conn.commit()
     conn.close()
 
