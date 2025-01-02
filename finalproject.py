@@ -1,28 +1,26 @@
 from dotenv import load_dotenv
 import os
 from flask import Flask, request, abort
+os.environ['TZ'] = 'Asia/Taipei'
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import google.generativeai as generativeai
 import sqlite3
 from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # 載入環境變數
 load_dotenv()
 
-# 初始化 Google Generative AI
-# generativeai.configure(api_key=os.getenv('KEY'))
-
 # 初始化 Flask 和 LINE Bot
 app = Flask(__name__)
-line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS'))
+line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
-print("Loaded LINE_CHANNEL_ACCESS:", os.getenv('LINE_CHANNEL_ACCESS'))
-print("Loaded LINE_CHANNEL_SECRET:", os.getenv('LINE_CHANNEL_SECRET'))
 
+# 用戶狀態
 user_states = {}
 
+# 初始化資料庫
 def init_db():
     conn = sqlite3.connect('ingredients.db')
     cursor = conn.cursor()
@@ -74,13 +72,14 @@ def handle_message(event):
         elif user_message == "刪除":
             user_states[user_id] = {"state": "delete", "data": {}}
             reply = "請輸入要刪除的食材 ID（多個 ID 請用空白分隔）："
+        elif user_message == "提醒":
+            expired_ingredients = get_expired_ingredients()
+            if expired_ingredients:
+                reply = "以下食材已過期，請檢查：\n" + "\n".join([f"{row[1]} (有效日期: {row[2]})" for row in expired_ingredients])
+            else:
+                reply = "目前沒有過期的食材。"
         else:
-            try:
-                model = generativeai.GenerativeModel('gemini-2.0-flash-exp')
-                response = model.generate_content(user_message)
-                reply = response.text
-            except Exception as e:
-                reply = f"AI 發生錯誤：{str(e)}"
+            reply = "無法辨識您的指令。"
     elif state == "ASK_INGREDIENT":
         user_states[user_id]["data"]["ingredient"] = user_message
         user_states[user_id]["state"] = "ASK_EXPIRATION"
@@ -126,6 +125,15 @@ def get_all_ingredients():
     conn.close()
     return rows
 
+def get_expired_ingredients():
+    today = datetime.now().strftime('%Y-%m-%d')
+    conn = sqlite3.connect('ingredients.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM ingredients WHERE expiration_date < ?', (today,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
 def add_ingredient(name, expiration_date):
     conn = sqlite3.connect('ingredients.db')
     cursor = conn.cursor()
@@ -150,6 +158,22 @@ def reindex_ingredients():
         cursor.execute('INSERT INTO ingredients (id, name, expiration_date) VALUES (?, ?, ?)', (index, row[1], row[2]))
     conn.commit()
     conn.close()
+
+def notify_expired_ingredients():
+    expired_ingredients = get_expired_ingredients()
+    if expired_ingredients:
+        for user_id in user_states.keys():  # 假設 user_states 儲存了所有用戶 ID
+            line_bot_api.push_message(
+                user_id,
+                TextSendMessage(
+                    text="以下食材已過期，請檢查：\n" + "\n".join([f"{row[1]} (有效日期: {row[2]})" for row in expired_ingredients])
+                )
+            )
+
+# 啟動排程器
+scheduler = BackgroundScheduler()
+scheduler.add_job(notify_expired_ingredients, 'cron', hour=11, minute=25)  # 每天上午 11:25 執行
+scheduler.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
