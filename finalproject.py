@@ -12,12 +12,14 @@ from datetime import datetime
 load_dotenv()
 
 # 初始化 Google Generative AI
-generativeai.configure(api_key=os.getenv('KEY'))
+# generativeai.configure(api_key=os.getenv('KEY'))
 
 # 初始化 Flask 和 LINE Bot
 app = Flask(__name__)
-line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
+line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
+print("Loaded LINE_CHANNEL_ACCESS:", os.getenv('LINE_CHANNEL_ACCESS'))
+print("Loaded LINE_CHANNEL_SECRET:", os.getenv('LINE_CHANNEL_SECRET'))
 
 user_states = {}
 
@@ -49,7 +51,6 @@ def callback():
     
     return 'OK'
 
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
@@ -58,49 +59,21 @@ def handle_message(event):
     if user_id not in user_states:
         user_states[user_id] = {"state": None, "data": {}}
     
-    # 食材管理
-    if user_message == "新增":
-        user_states[user_id] = {"state": "add_name", "data": {}}
-        reply = "請告訴我要新增的食材名稱和有效日期（格式：名稱1,日期1;名稱2,日期2）："
-    elif user_message == "查詢":
-        user_states[user_id] = {"state": None, "data": {}}
-        ingredients = get_all_ingredients()
-        if ingredients:
-            reply = "\n".join([f"{index + 1}. {row[1]} (有效日期: {row[2]})" for index, row in enumerate(ingredients)])
-        else:
-            reply = "目前沒有任何食材記錄。"
-    elif user_message == "刪除":
-        user_states[user_id] = {"state": "delete", "data": {}}
-        reply = "請輸入要刪除的食材 ID（多個 ID 請用空白分隔）："
-        
-    else:
-        state = user_states[user_id]["state"]
-        if state == "add_name":
-            ingredients = user_message.split(';')
-            errors = []
-            for ingredient in ingredients:
-                try:
-                    name, expiration_date = ingredient.split(',')
-                    if validate_date(expiration_date.strip()):
-                        add_ingredient(name.strip(), expiration_date.strip())
-                    else:
-                        errors.append(f"日期格式錯誤：{expiration_date.strip()}")
-                except ValueError:
-                    errors.append(f"格式錯誤：{ingredient}")
-            if errors:
-                reply = "以下食材新增失敗：\n" + "\n".join(errors)
+    state = user_states[user_id]["state"]
+    
+    if state is None:
+        if user_message == "新增":
+            user_states[user_id] = {"state": "ASK_INGREDIENT", "data": {}}
+            reply = "請告訴我要新增的食材名稱："
+        elif user_message == "查詢":
+            ingredients = get_all_ingredients()
+            if ingredients:
+                reply = "\n".join([f"{index + 1}. {row[1]} (有效日期: {row[2]})" for index, row in enumerate(ingredients)])
             else:
-                reply = "已成功新增所有食材：\n" + "\n".join([f"{name.strip()}, {expiration_date.strip()}" for name, expiration_date in [ingredient.split(',') for ingredient in ingredients]])
-            user_states[user_id] = {"state": None, "data": {}}
-        elif state == "delete":
-            try:
-                ingredient_ids = [int(id.strip()) for id in user_message.split()]
-                delete_ingredients(ingredient_ids)
-                reindex_ingredients()
-                reply = f"已成功刪除食材 ID：{' '.join(map(str, ingredient_ids))}"
-            except ValueError:
-                reply = "請輸入有效的食材 ID。"
-            user_states[user_id] = {"state": None, "data": {}}
+                reply = "目前沒有任何食材記錄。"
+        elif user_message == "刪除":
+            user_states[user_id] = {"state": "delete", "data": {}}
+            reply = "請輸入要刪除的食材 ID（多個 ID 請用空白分隔）："
         else:
             try:
                 model = generativeai.GenerativeModel('gemini-2.0-flash-exp')
@@ -108,6 +81,28 @@ def handle_message(event):
                 reply = response.text
             except Exception as e:
                 reply = f"AI 發生錯誤：{str(e)}"
+    elif state == "ASK_INGREDIENT":
+        user_states[user_id]["data"]["ingredient"] = user_message
+        user_states[user_id]["state"] = "ASK_EXPIRATION"
+        reply = "請告訴我該食材的有效日期（格式：YYYY-MM-DD）："
+    elif state == "ASK_EXPIRATION":
+        expiration_date = user_message
+        if validate_date(expiration_date):
+            ingredient = user_states[user_id]["data"]["ingredient"]
+            add_ingredient(ingredient, expiration_date)
+            reply = f"已成功新增食材：{ingredient}，有效日期：{expiration_date}"
+            user_states[user_id] = {"state": None, "data": {}}
+        else:
+            reply = "日期格式錯誤或日期已過期，請輸入有效日期（格式：YYYY-MM-DD）。"
+    elif state == "delete":
+        try:
+            ingredient_ids = [int(id.strip()) for id in user_message.split()]
+            delete_ingredients(ingredient_ids)
+            reindex_ingredients()
+            reply = f"已成功刪除食材 ID：{' '.join(map(str, ingredient_ids))}"
+        except ValueError:
+            reply = "請輸入有效的食材 ID。"
+        user_states[user_id] = {"state": None, "data": {}}
     
     line_bot_api.reply_message(
         event.reply_token,
@@ -116,7 +111,9 @@ def handle_message(event):
 
 def validate_date(date_text):
     try:
-        datetime.strptime(date_text, '%Y-%m-%d')
+        date = datetime.strptime(date_text, '%Y-%m-%d')
+        if date < datetime.now():
+            return False
         return True
     except ValueError:
         return False
