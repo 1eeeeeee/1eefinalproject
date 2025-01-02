@@ -86,6 +86,11 @@ def handle_message(event):
     elif user_message == "刪除":
         user_states[user_id] = {"state": "delete", "data": {}}
         reply = "請輸入要刪除的食材 ID（多個 ID 請用空白分隔）："
+    elif user_states[user_id]["state"] == "delete":
+        ids = list(map(int, user_message.split()))
+        delete_ingredients(ids)
+        reply = f"已刪除食材 ID：{'、'.join(map(str, ids))}"
+        user_states[user_id] = {"state": None, "data": {}}
     elif user_message == "修改":
         user_states[user_id] = {"state": "modify_id", "data": {}}
         reply = "請輸入要修改的食材 ID："
