@@ -1,12 +1,12 @@
-from dotenv import load_dotenv
 import os
+import sqlite3
+import logging
+from datetime import datetime
+from dotenv import load_dotenv
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import sqlite3
-from datetime import datetime
-import logging
 import google.generativeai as generativeai
 
 # 載入環境變數
@@ -26,11 +26,22 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # 使用者狀態
 user_states = {}
 
+# 資料庫檔案的路徑
+DB_PATH = os.path.join(os.getcwd(), 'data', 'ingredients.db')  # 使用相對路徑
+
 # 初始化資料庫
 def init_db():
     try:
-        conn = sqlite3.connect(os.path.join(os.getcwd(), '1eefinalproject', 'ingredients.db'))
+        # 如果資料庫檔案已經存在，先刪除舊的檔案
+        if os.path.exists(DB_PATH):
+            logging.info(f"舊的資料庫檔案已刪除：{DB_PATH}")
+            os.remove(DB_PATH)
+
+        # 創建新的資料庫檔案
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+
+        # 創建資料表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ingredients (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,8 +49,13 @@ def init_db():
                 expiration_date TEXT NOT NULL
             )
         ''')
+
+        # 提交並關閉資料庫
         conn.commit()
         conn.close()
+
+        logging.info(f"已成功重新生成資料庫，路徑：{DB_PATH}")
+
     except Exception as e:
         logging.error(f"資料庫初始化時發生錯誤: {str(e)}")
 
@@ -174,7 +190,7 @@ def validate_date(date_text):
 # 資料庫操作功能
 def get_all_ingredients():
     try:
-        conn = sqlite3.connect(os.path.join(os.getcwd(), '1eefinalproject', 'ingredients.db'))
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM ingredients ORDER BY id')
         rows = cursor.fetchall()
@@ -186,7 +202,7 @@ def get_all_ingredients():
 
 def add_ingredient(name, expiration_date):
     try:
-        conn = sqlite3.connect(os.path.join(os.getcwd(), '1eefinalproject', 'ingredients.db'))
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute('INSERT INTO ingredients (name, expiration_date) VALUES (?, ?)', (name, expiration_date))
         conn.commit()
@@ -196,17 +212,32 @@ def add_ingredient(name, expiration_date):
 
 def delete_ingredients(ids):
     try:
-        conn = sqlite3.connect(os.path.join(os.getcwd(), '1eefinalproject', 'ingredients.db'))
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+
+        # 刪除指定的食材
         cursor.executemany('DELETE FROM ingredients WHERE id = ?', [(i,) for i in ids])
+
+        # 重新編排 ID，並重新排序
+        cursor.execute('''
+            UPDATE ingredients
+            SET id = ROWID
+        ''')
+
+        # 提交變更並關閉資料庫連接
         conn.commit()
         conn.close()
+
+        logging.info(f"已成功刪除食材並重新編排 ID。")
     except Exception as e:
         logging.error(f"刪除食材時發生錯誤: {str(e)}")
 
+
+
+
 def check_ingredient_exists(ingredient_id):
     try:
-        conn = sqlite3.connect(os.path.join(os.getcwd(), '1eefinalproject', 'ingredients.db'))
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM ingredients WHERE id = ?', (ingredient_id,))
         exists = cursor.fetchone() is not None
@@ -218,7 +249,7 @@ def check_ingredient_exists(ingredient_id):
 
 def modify_ingredient(ingredient_id, name=None, expiration_date=None):
     try:
-        conn = sqlite3.connect(os.path.join(os.getcwd(), '1eefinalproject', 'ingredients.db'))
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         if name:
             cursor.execute('UPDATE ingredients SET name = ? WHERE id = ?', (name, ingredient_id))
@@ -230,4 +261,4 @@ def modify_ingredient(ingredient_id, name=None, expiration_date=None):
         logging.error(f"修改食材時發生錯誤: {str(e)}")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)
