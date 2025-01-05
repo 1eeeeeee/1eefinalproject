@@ -9,27 +9,27 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import google.generativeai as generativeai
 
-# 載入環境變數
+
 load_dotenv()
 
-# 初始化 Google Generative AI
+
 generativeai.configure(api_key=os.getenv('KEY'))
 
-# 初始化 Flask 和 LINE Bot
+
 app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# 設定日誌紀錄
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 使用者狀態
+
 user_states = {}
 
-# 資料庫檔案的路徑
-DB_PATH = os.path.join(os.getcwd(), 'data', 'ingredients.db')  # 使用相對路徑
 
-# 初始化資料庫
+DB_PATH = os.path.join(os.getcwd(), 'data', 'ingredients.db')  
+
+
 def init_db():
     try:
         if os.path.exists(DB_PATH):
@@ -101,6 +101,7 @@ def handle_message(event):
         if state == "add_name":
             ingredients = user_message.split(';')
             errors = []
+            successes = []
             for ingredient in ingredients:
                 try:
                     parts = ingredient.split()
@@ -110,14 +111,16 @@ def handle_message(event):
                     name, expiration_date = parts
                     if validate_date(expiration_date.strip()):
                         add_ingredient(name.strip(), expiration_date.strip())
+                        successes.append(f"{name.strip()} {expiration_date.strip()}")
                     else:
-                        errors.append(f"日期格式錯誤：{expiration_date.strip()}")
+                        errors.append(f"日期無效或過去日期：{expiration_date.strip()}")
                 except ValueError:
                     errors.append(f"格式錯誤：{ingredient}")
+            reply = ""
+            if successes:
+                reply += "已成功新增：\n" + "\n".join(successes)
             if errors:
-                reply = "以下食材新增失敗：\n" + "\n".join(errors)
-            else:
-                reply = "已成功新增：\n" + "\n".join([f"{name.strip()} {expiration_date.strip()}" for name, expiration_date in [ingredient.split() for ingredient in ingredients]])
+                reply += "\n以下食材新增失敗：\n" + "\n".join(errors)
             user_states[user_id] = {"state": None, "data": {}}
         elif state == "delete":
             try:
@@ -174,15 +177,17 @@ def handle_message(event):
         TextSendMessage(text=reply)
     )
 
-# 驗證日期
+
 def validate_date(date_text):
     try:
-        datetime.strptime(date_text, '%Y/%m/%d')
+        input_date = datetime.strptime(date_text, '%Y/%m/%d')
+        if input_date < datetime.now():
+            return False  
         return True
     except ValueError:
-        return False
+        return False  
 
-# 資料庫操作功能
+
 def get_all_ingredients():
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -209,11 +214,23 @@ def delete_ingredients(ids):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+
+   
         cursor.executemany('DELETE FROM ingredients WHERE id = ?', [(i,) for i in ids])
-        cursor.execute('UPDATE ingredients SET id = ROWID')
+        conn.commit()
+
+
+        cursor.execute('''
+            WITH Ordered AS (
+                SELECT ROW_NUMBER() OVER (ORDER BY id) AS new_id, id
+                FROM ingredients
+            )
+            UPDATE ingredients
+            SET id = (SELECT new_id FROM Ordered WHERE Ordered.id = ingredients.id)
+        ''')
         conn.commit()
         conn.close()
-        logging.info(f"已成功刪除食材並重新編排ID。")
+        logging.info("已成功刪除食材並重新編排ID。")
     except Exception as e:
         logging.error(f"刪除食材時發生錯誤：{str(e)}")
 
