@@ -32,16 +32,12 @@ DB_PATH = os.path.join(os.getcwd(), 'data', 'ingredients.db')  # 使用相對路
 # 初始化資料庫
 def init_db():
     try:
-        # 如果資料庫檔案已經存在，先刪除舊的檔案
         if os.path.exists(DB_PATH):
             logging.info(f"舊的資料庫檔案已刪除：{DB_PATH}")
             os.remove(DB_PATH)
 
-        # 創建新的資料庫檔案
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-
-        # 創建資料表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ingredients (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,13 +45,9 @@ def init_db():
                 expiration_date TEXT NOT NULL
             )
         ''')
-
-        # 提交並關閉資料庫
         conn.commit()
         conn.close()
-
         logging.info(f"已成功重新生成資料庫，路徑：{DB_PATH}")
-
     except Exception as e:
         logging.error(f"資料庫初始化時發生錯誤: {str(e)}")
 
@@ -63,7 +55,6 @@ init_db()
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    # 確認請求來自 LINE 平台
     signature = request.headers.get('X-Line-Signature')
     body = request.get_data(as_text=True)
 
@@ -84,27 +75,27 @@ def handle_message(event):
 
     if user_message == "新增":
         user_states[user_id] = {"state": "add_name", "data": {}}
-        reply = "請告訴我要新增的食材名稱和有效日期（格式：名稱1,日期1;名稱2,日期2）："
+        reply = "請輸入要新增的食材名稱和有效日期：\n（例如：蘋果 2025/01/01）"
     elif user_message == "查詢":
         user_states[user_id] = {"state": None, "data": {}}
         ingredients = get_all_ingredients()
         if ingredients:
-            reply = "\n".join([f"{row[0]}. {row[1]} (有效日期: {row[2]})" for row in ingredients])
+            reply = "\n".join([f"{row[0]}. {row[1]} (有效日期：{row[2]})" for row in ingredients])
         else:
             reply = "目前沒有任何食材記錄。"
     elif user_message == "刪除":
         user_states[user_id] = {"state": "delete", "data": {}}
-        reply = "請輸入要刪除的食材 ID（多個 ID 請用空白分隔）："
+        reply = "請輸入要刪除的食材ID（多個ID請用空白分隔）："
     elif user_message == "修改":
         ingredients = get_all_ingredients()
         if ingredients:
             user_states[user_id] = {"state": "modify_select_id", "data": {}}
-            reply = "請選擇要修改的食材 ID：\n" + "\n".join([f"{row[0]}. {row[1]} (有效日期: {row[2]})" for row in ingredients])
+            reply = "請選擇要修改的食材ID：\n" + "\n".join([f"{row[0]}. {row[1]} (有效日期：{row[2]})" for row in ingredients])
         else:
             reply = "目前沒有任何食材記錄。"
     elif user_message == "食譜":
         user_states[user_id] = {"state": "recipe", "data": {}}
-        reply = "請輸入可用的食材名稱（用空白分隔）："
+        reply = "請輸入食材名稱（請用空白分隔）："
     else:
         state = user_states[user_id]["state"]
         if state == "add_name":
@@ -112,7 +103,11 @@ def handle_message(event):
             errors = []
             for ingredient in ingredients:
                 try:
-                    name, expiration_date = ingredient.split(',')
+                    parts = ingredient.split()
+                    if len(parts) != 2:
+                        errors.append(f"格式錯誤：{ingredient}")
+                        continue
+                    name, expiration_date = parts
                     if validate_date(expiration_date.strip()):
                         add_ingredient(name.strip(), expiration_date.strip())
                     else:
@@ -122,15 +117,15 @@ def handle_message(event):
             if errors:
                 reply = "以下食材新增失敗：\n" + "\n".join(errors)
             else:
-                reply = "已成功新增所有食材：\n" + "\n".join([f"{name.strip()}, {expiration_date.strip()}" for name, expiration_date in [ingredient.split(',') for ingredient in ingredients]])
+                reply = "已成功新增：\n" + "\n".join([f"{name.strip()} {expiration_date.strip()}" for name, expiration_date in [ingredient.split() for ingredient in ingredients]])
             user_states[user_id] = {"state": None, "data": {}}
         elif state == "delete":
             try:
                 ingredient_ids = [int(id.strip()) for id in user_message.split()]
                 delete_ingredients(ingredient_ids)
-                reply = f"已成功刪除食材 ID：{' '.join(map(str, ingredient_ids))}"
+                reply = f"已成功刪除食材ID：{' '.join(map(str, ingredient_ids))}"
             except ValueError:
-                reply = "請輸入有效的食材 ID。"
+                reply = "請輸入有效的食材ID。"
             user_states[user_id] = {"state": None, "data": {}}
         elif state == "modify_select_id":
             try:
@@ -139,16 +134,16 @@ def handle_message(event):
                     user_states[user_id] = {"state": "modify_select_field", "data": {"id": ingredient_id}}
                     reply = "請選擇要修改的欄位：\n1. 名稱\n2. 有效日期"
                 else:
-                    reply = "該食材 ID 不存在，請重新輸入。"
+                    reply = "該食材ID不存在，請重新輸入。"
             except ValueError:
-                reply = "請輸入有效的食材 ID。"
+                reply = "請輸入有效的食材ID。"
         elif state == "modify_select_field":
             if user_message == "1":
                 user_states[user_id]["state"] = "modify_name"
                 reply = "請輸入新的名稱："
             elif user_message == "2":
                 user_states[user_id]["state"] = "modify_expiration_date"
-                reply = "請輸入新的有效日期（格式：YYYY-MM-DD）："
+                reply = "請輸入新的有效日期："
             else:
                 reply = "請輸入有效的選項（1 或 2）。"
         elif state == "modify_name":
@@ -162,7 +157,7 @@ def handle_message(event):
                 modify_ingredient(ingredient_id, expiration_date=user_message.strip())
                 reply = f"已成功修改食材有效日期為：{user_message.strip()}"
             else:
-                reply = "日期格式錯誤，請使用正確的格式（YYYY-MM-DD）。"
+                reply = "日期格式錯誤，請使用正確的格式（YYYY/MM/DD）。"
             user_states[user_id] = {"state": None, "data": {}}
         elif state == "recipe":
             try:
@@ -182,7 +177,7 @@ def handle_message(event):
 # 驗證日期
 def validate_date(date_text):
     try:
-        datetime.strptime(date_text, '%Y-%m-%d')
+        datetime.strptime(date_text, '%Y/%m/%d')
         return True
     except ValueError:
         return False
@@ -197,7 +192,7 @@ def get_all_ingredients():
         conn.close()
         return rows
     except Exception as e:
-        logging.error(f"查詢資料庫時發生錯誤: {str(e)}")
+        logging.error(f"查詢資料庫時發生錯誤：{str(e)}")
         return []
 
 def add_ingredient(name, expiration_date):
@@ -208,32 +203,19 @@ def add_ingredient(name, expiration_date):
         conn.commit()
         conn.close()
     except Exception as e:
-        logging.error(f"新增食材時發生錯誤: {str(e)}")
+        logging.error(f"新增食材時發生錯誤：{str(e)}")
 
 def delete_ingredients(ids):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-
-        # 刪除指定的食材
         cursor.executemany('DELETE FROM ingredients WHERE id = ?', [(i,) for i in ids])
-
-        # 重新編排 ID，並重新排序
-        cursor.execute('''
-            UPDATE ingredients
-            SET id = ROWID
-        ''')
-
-        # 提交變更並關閉資料庫連接
+        cursor.execute('UPDATE ingredients SET id = ROWID')
         conn.commit()
         conn.close()
-
-        logging.info(f"已成功刪除食材並重新編排 ID。")
+        logging.info(f"已成功刪除食材並重新編排ID。")
     except Exception as e:
-        logging.error(f"刪除食材時發生錯誤: {str(e)}")
-
-
-
+        logging.error(f"刪除食材時發生錯誤：{str(e)}")
 
 def check_ingredient_exists(ingredient_id):
     try:
@@ -244,7 +226,7 @@ def check_ingredient_exists(ingredient_id):
         conn.close()
         return exists
     except Exception as e:
-        logging.error(f"檢查食材存在時發生錯誤: {str(e)}")
+        logging.error(f"檢查食材存在時發生錯誤：{str(e)}")
         return False
 
 def modify_ingredient(ingredient_id, name=None, expiration_date=None):
@@ -258,7 +240,7 @@ def modify_ingredient(ingredient_id, name=None, expiration_date=None):
         conn.commit()
         conn.close()
     except Exception as e:
-        logging.error(f"修改食材時發生錯誤: {str(e)}")
+        logging.error(f"修改食材時發生錯誤：{str(e)}")
 
 if __name__ == "__main__":
     app.run(debug=False)
