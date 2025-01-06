@@ -44,6 +44,7 @@ def init_db():
         cursor = conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ingredients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 expiration_date TEXT NOT NULL
             )
@@ -57,23 +58,22 @@ def init_db():
         conn.close()
         logging.info(f"已成功重新生成資料庫，路徑：{DB_PATH}")
     except Exception as e:
-        logging.error(f"資料庫初始化時發生錯誤: {str(e)}")
-
+        logging.error(f"資料庫初始化時發生錯誤：{str(e)}")
 init_db()
 
-# 手動添加即將過期的食材
+# 手動新增即將過期的食材
 def add_test_ingredients():
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        # 添加一個即將過期的食材
+        # 新增一個即將過期的食材
         expiration_date = (datetime.now() + timedelta(days=3)).strftime('%Y/%m/%d')
         cursor.execute('INSERT INTO ingredients (name, expiration_date) VALUES (?, ?)', ('測試食材', expiration_date))
         conn.commit()
         conn.close()
-        logging.info("已成功添加測試食材")
+        logging.info("已成功新增測試食材")
     except Exception as e:
-        logging.error(f"添加測試食材時發生錯誤：{str(e)}")
+        logging.error(f"新增測試食材時發生錯誤：{str(e)}")
 
 add_test_ingredients()
 
@@ -81,7 +81,7 @@ add_test_ingredients()
 def callback():
     signature = request.headers.get('X-Line-Signature')
     body = request.get_data(as_text=True)
-    logging.info(f"收到來自 LINE 的 Webhook 請求：{body}")
+    logging.info(f"收到來自LINE的Webhook請求：{body}")
 
     try:
         handler.handle(body, signature)
@@ -111,17 +111,17 @@ def handle_message(event):
         user_states[user_id] = {"state": None, "data": {}}
         ingredients = get_all_ingredients()
         if ingredients:
-            reply = "\n".join([f"{row[0]} (有效日期：{row[1]})" for row in ingredients])
+            reply = "\n".join([f"{row[0]}. {row[1]} (有效日期：{row[2]})" for row in ingredients])
         else:
             reply = "目前沒有任何食材記錄。"
     elif user_message == "刪除":
         user_states[user_id] = {"state": "delete", "data": {}}
-        reply = "請輸入要刪除的食材名稱和有效日期（例如：蘋果 2025/01/01）："
+        reply = "請輸入要刪除的食材ID："
     elif user_message == "修改":
         ingredients = get_all_ingredients()
         if ingredients:
-            user_states[user_id] = {"state": "modify_select_name", "data": {}}
-            reply = "請選擇要修改的食材名稱和有效日期：\n" + "\n".join([f"{row[0]} (有效日期：{row[1]})" for row in ingredients])
+            user_states[user_id] = {"state": "modify_select_id", "data": {}}
+            reply = "請選擇要修改的食材ID：\n" + "\n".join([f"{row[0]}. {row[1]} (有效日期：{row[2]})" for row in ingredients])
         else:
             reply = "目前沒有任何食材記錄。"
     elif user_message == "食譜":
@@ -155,27 +155,19 @@ def handle_message(event):
             user_states[user_id] = {"state": None, "data": {}}
         elif state == "delete":
             try:
-                parts = user_message.split()
-                if len(parts) != 2:
-                    reply = "格式錯誤，請輸入食材名稱和有效日期（例如：蘋果 2025/01/01）。"
-                else:
-                    name, expiration_date = parts
-                    delete_ingredient(name.strip(), expiration_date.strip())
-                    reply = f"已成功刪除食材：{name.strip()} {expiration_date.strip()}"
+                ingredient_id = int(user_message.strip())
+                delete_ingredient(ingredient_id)
+                reply = f"已成功刪除食材，ID：{ingredient_id}"
             except ValueError:
-                reply = "格式錯誤，請輸入食材名稱和有效日期（例如：蘋果 2025/01/01）。"
+                reply = "格式錯誤，請輸入正確的食材ID。"
             user_states[user_id] = {"state": None, "data": {}}
-        elif state == "modify_select_name":
+        elif state == "modify_select_id":
             try:
-                parts = user_message.split()
-                if len(parts) != 2:
-                    reply = "格式錯誤，請輸入食材名稱和有效日期（例如：蘋果 2025/01/01）。"
-                else:
-                    name, expiration_date = parts
-                    user_states[user_id] = {"state": "modify_select_field", "data": {"name": name.strip(), "expiration_date": expiration_date.strip()}}
-                    reply = "請選擇要修改的欄位：\n1. 名稱\n2. 有效日期"
+                ingredient_id = int(user_message.strip())
+                user_states[user_id] = {"state": "modify_select_field", "data": {"id": ingredient_id}}
+                reply = "請選擇要修改的欄位：\n1. 名稱\n2. 有效日期"
             except ValueError:
-                reply = "格式錯誤，請輸入食材名稱和有效日期（例如：蘋果 2025/01/01）。"
+                reply = "格式錯誤，請輸入正確的食材ID。"
         elif state == "modify_select_field":
             if user_message == "1":
                 user_states[user_id]["state"] = "modify_name"
@@ -186,16 +178,14 @@ def handle_message(event):
             else:
                 reply = "請輸入有效的選項（1 或 2）。"
         elif state == "modify_name":
-            name = user_states[user_id]["data"]["name"]
-            expiration_date = user_states[user_id]["data"]["expiration_date"]
-            modify_ingredient(name, expiration_date, new_name=user_message.strip())
+            ingredient_id = user_states[user_id]["data"]["id"]
+            modify_ingredient(ingredient_id, new_name=user_message.strip())
             reply = f"已成功修改食材名稱為：{user_message.strip()}"
             user_states[user_id] = {"state": None, "data": {}}
         elif state == "modify_expiration_date":
-            name = user_states[user_id]["data"]["name"]
-            expiration_date = user_states[user_id]["data"]["expiration_date"]
+            ingredient_id = user_states[user_id]["data"]["id"]
             if validate_date(user_message.strip()):
-                modify_ingredient(name, expiration_date, new_expiration_date=user_message.strip())
+                modify_ingredient(ingredient_id, new_expiration_date=user_message.strip())
                 reply = f"已成功修改食材有效日期為：{user_message.strip()}"
             else:
                 reply = "日期格式錯誤，請使用正確的格式（YYYY/MM/DD）。"
@@ -223,7 +213,7 @@ def store_user_id(user_id):
         conn.commit()
         conn.close()
     except Exception as e:
-        logging.error(f"存儲用戶 ID 時發生錯誤：{str(e)}")
+        logging.error(f"存儲用戶ID時發生錯誤：{str(e)}")
 
 # 資料庫操作的輔助函數
 def validate_date(date_text):
@@ -239,7 +229,7 @@ def get_all_ingredients():
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM ingredients ORDER BY name')
+        cursor.execute('SELECT id, name, expiration_date FROM ingredients ORDER BY id')
         rows = cursor.fetchall()
         conn.close()
         return rows
@@ -257,25 +247,32 @@ def add_ingredient(name, expiration_date):
     except Exception as e:
         logging.error(f"新增食材時發生錯誤：{str(e)}")
 
-def delete_ingredient(name, expiration_date):
+def delete_ingredient(ingredient_id):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute('DELETE FROM ingredients WHERE name = ? AND expiration_date = ?', (name, expiration_date))
+        cursor.execute('DELETE FROM ingredients WHERE id = ?', (ingredient_id,))
+        conn.commit()
+
+        # 重新排列所有食材的 ID
+        cursor.execute('SELECT id FROM ingredients ORDER BY id')
+        rows = cursor.fetchall()
+        for new_id, (old_id,) in enumerate(rows, start=1):
+            cursor.execute('UPDATE ingredients SET id = ? WHERE id = ?', (new_id, old_id))
         conn.commit()
         conn.close()
-        logging.info(f"已成功刪除食材：{name} {expiration_date}")
+        logging.info(f"已成功刪除食材，ID：{ingredient_id}")
     except Exception as e:
         logging.error(f"刪除食材時發生錯誤：{str(e)}")
 
-def modify_ingredient(name, expiration_date, new_name=None, new_expiration_date=None):
+def modify_ingredient(ingredient_id, new_name=None, new_expiration_date=None):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         if new_name:
-            cursor.execute('UPDATE ingredients SET name = ? WHERE name = ? AND expiration_date = ?', (new_name, name, expiration_date))
+            cursor.execute('UPDATE ingredients SET name = ? WHERE id = ?', (new_name, ingredient_id))
         if new_expiration_date:
-            cursor.execute('UPDATE ingredients SET expiration_date = ? WHERE name = ? AND expiration_date = ?', (new_expiration_date, name, expiration_date))
+            cursor.execute('UPDATE ingredients SET expiration_date = ? WHERE id = ?', (new_expiration_date, ingredient_id))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -285,7 +282,7 @@ def modify_ingredient(name, expiration_date, new_name=None, new_expiration_date=
 def schedule_reminders():
     # 設定每天指定時間執行提醒任務
     now = datetime.now()
-    target_time = datetime.combine(now.date(), datetime.strptime("15:25", "%H:%M").time())
+    target_time = datetime.combine(now.date(), datetime.strptime("16:03", "%H:%M").time())
     if now > target_time:
         target_time += timedelta(days=1) 
     delay = (target_time - now).total_seconds()
