@@ -1,41 +1,35 @@
-import sqlite3
-from datetime import datetime, timedelta
+import logging
 from linebot import LineBotApi
 from linebot.models import TextSendMessage
 import os
-import logging
+import sqlite3
+from datetime import datetime, timedelta
 
-# 設定環境變數
-DB_PATH = os.path.join(os.getcwd(), 'data', 'ingredients.db')
+# 初始化 LINE API
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
-USER_ID = os.getenv('LINE_USER_ID')  # 添加用戶ID環境變數
-
-# 設定LOG紀錄
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def send_reminders():
-    logging.info("send_reminders 函數已觸發")
     try:
-        conn = sqlite3.connect(DB_PATH)
+        # 連接到資料庫
+        conn = sqlite3.connect('data/ingredients.db')
         cursor = conn.cursor()
 
-        # 獲取過期或即將過期的食材（5日內過期）
-        today = datetime.now()
-        threshold_date = (today + timedelta(days=5)).strftime('%Y/%m/%d')
-        cursor.execute('''
-            SELECT name, expiration_date FROM ingredients
-            WHERE expiration_date <= ?
-        ''', (threshold_date,))
+        # 獲取即將過期的食材
+        expiration_date_limit = (datetime.now() + timedelta(days=3)).strftime('%Y/%m/%d')
+        cursor.execute('SELECT name, expiration_date FROM ingredients WHERE expiration_date <= ?', (expiration_date_limit,))
         rows = cursor.fetchall()
+
+        # 獲取所有用戶 ID
+        cursor.execute('SELECT user_id FROM users')
+        user_ids = cursor.fetchall()
         conn.close()
 
         if rows:
             for row in rows:
-                name, expiration_date = row
-                message = f"提醒：食材 {name} 將於 {expiration_date} 過期。"
-                logging.info(message)
-                # 發送提醒訊息
-                line_bot_api.push_message(USER_ID, TextSendMessage(text=message))
+                message = f"提醒：{row[0]} 即將於 {row[1]} 過期！"
+                for user_id in user_ids:
+                    line_bot_api.push_message(user_id[0], TextSendMessage(text=message))
+                    logging.info(f"已發送提醒給用戶 {user_id[0]}：{message}")
         else:
             logging.info("沒有即將過期的食材。")
     except Exception as e:

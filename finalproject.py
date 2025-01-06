@@ -11,29 +11,29 @@ import google.generativeai as generativeai
 import schedule
 import time
 import threading
-from reminder import send_reminders  # Ensure this exists in your reminder.py file
+from reminder import send_reminders  # 確保這個函數存在於你的 reminder.py 文件中
 
-# Load environment variables
+# 載入環境變數
 load_dotenv()
 
-# Set up Google Generative AI API key
+# 設置 Google Generative AI API 密鑰
 generativeai.configure(api_key=os.getenv('KEY'))
 
-# Initialize Flask app and LINE API
+# 初始化 Flask 應用和 LINE API
 app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# Set up logging
+# 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# User state management
+# 用戶狀態管理
 user_states = {}
 
-# Database file path
+# 資料庫文件路徑
 DB_PATH = os.path.join(os.getcwd(), 'data', 'ingredients.db')
 
-# Initialize database
+# 初始化資料庫
 def init_db():
     try:
         if os.path.exists(DB_PATH):
@@ -46,6 +46,11 @@ def init_db():
             CREATE TABLE IF NOT EXISTS ingredients (
                 name TEXT NOT NULL,
                 expiration_date TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY
             )
         ''')
         conn.commit()
@@ -92,10 +97,13 @@ def handle_message(event):
     logging.info(f"收到來自用戶 {user_id} 的訊息")
     user_message = event.message.text.strip()
 
+    # 將用戶 ID 存儲到資料庫中
+    store_user_id(user_id)
+
     if user_id not in user_states:
         user_states[user_id] = {"state": None, "data": {}}
 
-    # Handle different user commands
+    # 處理不同的用戶命令
     if user_message == "新增":
         user_states[user_id] = {"state": "add_name", "data": {}}
         reply = "請輸入要新增的食材名稱和有效日期：\n（例如：蘋果 2025/01/01）"
@@ -207,7 +215,17 @@ def handle_message(event):
         TextSendMessage(text=reply)
     )
 
-# Helper functions for database operations
+def store_user_id(user_id):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO users (user_id) VALUES (?)', (user_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"存儲用戶 ID 時發生錯誤：{str(e)}")
+
+# 資料庫操作的輔助函數
 def validate_date(date_text):
     try:
         input_date = datetime.strptime(date_text, '%Y/%m/%d')
@@ -263,7 +281,7 @@ def modify_ingredient(name, expiration_date, new_name=None, new_expiration_date=
     except Exception as e:
         logging.error(f"修改食材時發生錯誤：{str(e)}")
 
-# Schedule reminders
+# 排程提醒
 def schedule_reminders():
     schedule.every(1).minutes.do(send_reminders)  # 每分鐘執行一次
     logging.info("提醒排程已設定")
@@ -274,7 +292,7 @@ def run_schedule():
         logging.info("正在檢查排程任務")
         time.sleep(60)
 
-# Run Flask app
+# 運行 Flask 應用
 if __name__ == "__main__":
     schedule_reminders()
     schedule_thread = threading.Thread(target=run_schedule)
