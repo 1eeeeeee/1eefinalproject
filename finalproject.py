@@ -151,7 +151,7 @@ def handle_message(event):
             if successes:
                 reply += "已成功新增：\n" + "\n".join(successes)
             if errors:
-                reply += "\n以下食材新增失敗：\n" + "\n".join(errors)
+                reply += "以下食材新增失敗：\n" + "\n".join(errors)
             user_states[user_id] = {"state": None, "data": {}}
         elif state == "delete":
             try:
@@ -283,14 +283,22 @@ def modify_ingredient(name, expiration_date, new_name=None, new_expiration_date=
 
 # 排程提醒
 def schedule_reminders():
-    schedule.every(1).minutes.do(send_reminders)  # 每分鐘執行一次
-    logging.info("提醒排程已設定")
+    # 設定每天指定時間執行提醒任務
+    now = datetime.now()
+    target_time = datetime.combine(now.date(), datetime.strptime("15:25", "%H:%M").time())
+    if now > target_time:
+        target_time += timedelta(days=1) 
+    delay = (target_time - now).total_seconds()
+
+    # 使用 Timer 設置延遲執行
+    threading.Timer(delay, send_reminders).start()
+    logging.info(f"提醒排程已設定，將於 {target_time.strftime('%Y-%m-%d %H:%M')} 執行")
 
 def run_schedule():
     while True:
         schedule.run_pending()
-        logging.info("正在檢查排程任務")
-        time.sleep(60)
+        logging.debug("正在檢查排程任務")  # 修改為 DEBUG 級別
+        time.sleep(600)
 
 # 運行 Flask 應用
 if __name__ == "__main__":
